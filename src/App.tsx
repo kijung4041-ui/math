@@ -1,364 +1,497 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
-// ---------------------------------------------------------------------------
-// 퍼즐 데이터 및 정답 정의
-// ---------------------------------------------------------------------------
-interface Puzzle {
-  id: number;
-  title: string;
-  description: string;
-  question: string;
-  hint: string;
-  answer: string;
-  keyFragment: string;
+// ===========================================================================
+// TYPE DEFINITIONS & PUZZLE CONFIG
+// ===========================================================================
+interface Player {
+  id: string;
+  nickname: string;
+  x: number;
+  y: number;
+  color: string;
+  solvedPuzzles: number[];
+  finishTime?: number;
 }
 
-const PUZZLES: Puzzle[] = [
-  {
-    id: 1,
-    title: "Puzzle 1: Basking 31 AI Chamber",
-    description: "게임이론 및 모듈로 연산",
-    question: "AI와 1~3씩 더하며 31을 만드는 게임입니다. 상대가 무조건 이기는 필승 전략의 핵심 나머지는 4로 나눈 나머지 얼마일까요? (힌트: 31을 4로 나눈 나머지)",
-    hint: "31 ÷ 4 = 7... 나머지 ?",
-    answer: "3",
-    keyFragment: "M"
-  },
-  {
-    id: 2,
-    title: "Puzzle 2: Euler's Polyhedron Chamber",
-    description: "오일러 다면체 정리",
-    question: "구와 위상적으로 같은 모든 입체도형에서 (꼭짓점 수 V) - (모서리 수 E) + (면의 수 F)의 값은 항상 일정합니다. 이 값은 얼마일까요?",
-    hint: "정육면체: V=8, E=12, F=6 -> 8 - 12 + 6 = ?",
-    answer: "2",
-    keyFragment: "A"
-  },
-  {
-    id: 3,
-    title: "Puzzle 3: Caesar Cipher Vault",
-    description: "시저 암호 해독",
-    question: "암호문 'MATH'를 오른쪽으로 3칸 이동(Shift +3)시켜 암호화하려고 합니다. 첫 번째 글자 'M'은 어떤 알파벳으로 변할까요?",
-    hint: "M -> N(1) -> O(2) -> ?(3)",
-    answer: "P",
-    keyFragment: "T"
-  },
-  {
-    id: 4,
-    title: "Puzzle 4: Pythagorean Gate",
-    description: "피타고라스 정리",
-    question: "직각삼각형의 두 변의 길이가 각각 3과 4일 때, 빗변의 길이 x는 얼마일까요? (3² + 4² = x²)",
-    hint: "9 + 16 = 25 = x²",
-    answer: "5",
-    keyFragment: "H"
-  },
-  {
-    id: 5,
-    title: "Puzzle 5: Fibonacci Sequence",
-    description: "피보나치 수열 패턴",
-    question: "수열 1, 1, 2, 3, 5, 8, 13, ? 에서 빈칸에 들어갈 다음 숫자는 무엇일까요?",
-    hint: "앞의 두 수를 더하면 다음 수가 됩니다 (8 + 13)",
-    answer: "21",
-    keyFragment: "!"
-  },
-  {
-    id: 6,
-    title: "Puzzle 6: System of Equations",
-    description: "연립방정식 풀이",
-    question: "x + y = 10, x - y = 4 일 때, x의 값은 얼마일까요?",
-    hint: "두 식을 더하면 2x = 14 가 됩니다.",
-    answer: "7",
-    keyFragment: "7"
-  }
+interface PuzzleNode {
+  id: number;
+  title: string;
+  x: number;
+  y: number;
+}
+
+const PUZZLE_NODES: PuzzleNode[] = [
+  { id: 1, title: '1. 배스킨라빈스 31', x: 100, y: 100 },
+  { id: 2, title: '2. 규칙 찾기1', x: 300, y: 100 },
+  { id: 3, title: '3. 숫자야구 ', x: 500, y: 100 },
+  { id: 4, title: '4. 규칙 찾기2', x: 100, y: 300 },
+  { id: 5, title: '5. 3x3 마방진', x: 300, y: 300 },
+  { id: 6, title: '6. 주관식 퀴즈', x: 500, y: 300 },
 ];
 
 export default function App() {
-  const [solvedPuzzles, setSolvedPuzzles] = useState<number[]>([]);
-  const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
-  const [userInput, setUserInput] = useState<string>('');
-  const [feedback, setFeedback] = useState<{ message: string; isError: boolean } | null>(null);
-  const [isEscaped, setIsEscaped] = useState<boolean>(false);
+  // ---------------------------------------------------------------------------
+  // STATE MANAGEMENT
+  // ---------------------------------------------------------------------------
+  const [gameState, setGameState] = useState<'LOGIN' | 'WAITING' | 'PLAYING' | 'ENDED'>('LOGIN');
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [nickname, setNickname] = useState<string>('');
+  
+  // Player Position & Solved Status
+  const [player, setPlayer] = useState<Player>({
+    id: Math.random().toString(36).substring(2, 9),
+    nickname: '',
+    x: 250,
+    y: 200,
+    color: '#' + Math.floor(Math.random()*16777215).toString(16),
+    solvedPuzzles: []
+  });
 
-  // 퍼즐 모달 열기
-  const openPuzzle = (puzzle: Puzzle) => {
-    setActivePuzzle(puzzle);
-    setUserInput('');
-    setFeedback(null);
+  const [activePuzzleId, setActivePuzzleId] = useState<number | null>(null);
+  const [timer, setTimer] = useState<number>(0);
+  const timerRef = useRef<any>(null);
+
+  // ---------------------------------------------------------------------------
+  // PUZZLE SPECIFIC STATES
+  // ---------------------------------------------------------------------------
+  // Puzzle 1: 31 Game
+  const [game31Sum, setGame31Sum] = useState<number>(0);
+  const [game31Turn, setGame31Turn] = useState<'USER' | 'AI'>('USER');
+  const [game31Log, setGame31Log] = useState<string>('게임을 시작합니다. 1~3 중 선택하세요.');
+
+  // Puzzle 2 & 4 & 6 Inputs
+  const [inputP2, setInputP2] = useState('');
+  const [inputP4, setInputP4] = useState('');
+  const [inputP6, setInputP6] = useState('');
+
+  // Puzzle 3: Baseball Game
+  const [baseballTarget] = useState<string>(() => {
+    const nums = ['0','1','2','3','4','5','6','7','8','9'];
+    nums.sort(() => Math.random() - 0.5);
+    return nums.slice(0, 4).join('');
+  });
+  const [baseballInput, setBaseballInput] = useState('');
+  const [baseballHistory, setBaseballHistory] = useState<{ tryStr: string; result: string }[]>([]);
+
+  // Puzzle 5: Magic Square Grid
+  const [magicSquare, setMagicSquare] = useState<string[]>([
+    '', '', '',
+    '', '', '',
+    '8', '1', '6'
+  ]);
+
+  // ---------------------------------------------------------------------------
+  // TIMER & GAME LOOP
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (gameState === 'PLAYING') {
+      timerRef.current = setInterval(() => {
+        setTimer((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [gameState]);
+
+  // Handle Game Completion
+  useEffect(() => {
+    if (player.solvedPuzzles.length === 6 && gameState === 'PLAYING') {
+      setGameState('ENDED');
+    }
+  }, [player.solvedPuzzles, gameState]);
+
+  // ---------------------------------------------------------------------------
+  // METAVERSE CONTROLLER (MOVEMENT)
+  // ---------------------------------------------------------------------------
+  const movePlayer = (dx: number, dy: number) => {
+    if (gameState !== 'PLAYING') return;
+    setPlayer((prev) => {
+      const newX = Math.max(20, Math.min(580, prev.x + dx));
+      const newY = Math.max(20, Math.min(380, prev.y + dy));
+      
+      // Check collision with puzzle nodes
+      PUZZLE_NODES.forEach((node) => {
+        const dist = Math.hypot(node.x - newX, node.y - newY);
+        if (dist < 30 && !prev.solvedPuzzles.includes(node.id)) {
+          setActivePuzzleId(node.id);
+        }
+      });
+
+      return { ...prev, x: newX, y: newY };
+    });
   };
 
-  // 정답 제출 확인
-  const handleSubmitAnswer = () => {
-    if (!activePuzzle) return;
+  const markPuzzleSolved = (id: number) => {
+    if (!player.solvedPuzzles.includes(id)) {
+      setPlayer((prev) => ({
+        ...prev,
+        solvedPuzzles: [...prev.solvedPuzzles, id]
+      }));
+    }
+    setActivePuzzleId(null);
+  };
 
-    const sanitizedInput = userInput.trim().toUpperCase();
-    if (sanitizedInput === activePuzzle.answer.toUpperCase()) {
-      if (!solvedPuzzles.includes(activePuzzle.id)) {
-        setSolvedPuzzles([...solvedPuzzles, activePuzzle.id]);
+  // ---------------------------------------------------------------------------
+  // PUZZLE LOGIC HANDLERS
+  // ---------------------------------------------------------------------------
+  // P1: 31 Game User Move
+  const handle31UserMove = (num: number) => {
+    const nextSum = game31Sum + num;
+    if (nextSum >= 31) {
+      setGame31Log(`31을 초과했거나 도달했습니다! 패배했습니다.`);
+      setGame31Sum(0);
+      return;
+    }
+
+    setGame31Sum(nextSum);
+    setGame31Log(`당신: +${num} (현재 ${nextSum})`);
+    setGame31Turn('AI');
+
+    // AI Turn Processing
+    setTimeout(() => {
+      const remainder = nextSum % 4;
+      let aiMove = (3 - remainder + 4) % 4;
+      if (aiMove === 0) aiMove = 1;
+      const aiNextSum = nextSum + aiMove;
+
+      if (aiNextSum >= 31) {
+        setGame31Log(`AI가 31에 도달했습니다! 승리했습니다!`);
+        markPuzzleSolved(1);
+      } else {
+        setGame31Sum(aiNextSum);
+        setGame31Log(`AI: +${aiMove} (현재 ${aiNextSum})`);
+        setGame31Turn('USER');
       }
-      setFeedback({ message: `정답입니다! 열쇠 조각 [ ${activePuzzle.keyFragment} ] 을(를) 획득했습니다.`, isError: false });
-      setTimeout(() => {
-        setActivePuzzle(null);
-      }, 1500);
-    } else {
-      setFeedback({ message: "오답입니다. 다시 시도해 보세요!", isError: true });
+    }, 800);
+  };
+
+  // P3: Baseball Evaluation
+  const handleBaseballSubmit = () => {
+    if (baseballInput.length !== 4) return;
+    let strike = 0;
+    let ball = 0;
+
+    for (let i = 0; i < 4; i++) {
+      if (baseballInput[i] === baseballTarget[i]) {
+        strike++;
+      } else if (baseballTarget.includes(baseballInput[i])) {
+        ball++;
+      }
+    }
+
+    const resultStr = strike === 4 ? '4 Strike! 승리!' : `${strike}S ${ball}B`;
+    const newHistory = [...baseballHistory, { tryStr: baseballInput, result: resultStr }];
+    setBaseballHistory(newHistory);
+    setBaseballInput('');
+
+    if (strike === 4) {
+      markPuzzleSolved(3);
+    } else if (newHistory.length >= 10) {
+      alert('10회 실패! 게임을 재시작합니다.');
+      setBaseballHistory([]);
     }
   };
 
-  return (
-    <div style={{
-      minHeight: '100vh',
-      backgroundColor: '#0f172a',
-      color: '#ffffff',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      padding: '2rem 1rem',
-      boxSizing: 'border-box'
-    }}>
-      <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '2.25rem', color: '#38bdf8', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-          🔐 Math Escape: The Cipher Chamber
-        </h1>
-        <p style={{ color: '#94a3b8', marginBottom: '2rem', fontSize: '1.1rem' }}>
-          수학적 사고력을 활용하여 6개의 암호를 해독하고 방을 탈출하세요!
-        </p>
+  // P5: Magic Square Check
+  const handleMagicSquareSubmit = () => {
+    const grid = magicSquare.map(Number);
+    // Expected Answer: [4, 9, 2, 3, 5, 7, 8, 1, 6]
+    const targetAnswer = [4, 9, 2, 3, 5, 7, 8, 1, 6];
+    const isCorrect = grid.every((val, idx) => val === targetAnswer[idx]);
 
-        {/* 수집한 열쇠 현황 */}
-        <div style={{
-          backgroundColor: '#1e293b',
-          borderRadius: '1rem',
-          padding: '1.5rem',
-          marginBottom: '2rem',
-          border: '1px solid #334155'
-        }}>
-          <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>
-            🔑 수집한 열쇠 조각: <span style={{ color: '#38bdf8' }}>{solvedPuzzles.length}</span> / 6
-          </h2>
-          <div style={{
-            display: 'flex',
-            gap: '0.5rem',
-            justifyContent: 'center',
-            marginTop: '1rem'
-          }}>
-            {PUZZLES.map((p) => {
-              const isSolved = solvedPuzzles.includes(p.id);
-              return (
-                <div key={p.id} style={{
-                  width: '45px',
-                  height: '45px',
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 'bold',
-                  fontSize: '1.1rem',
-                  backgroundColor: isSolved ? '#0284c7' : '#334155',
-                  color: isSolved ? '#ffffff' : '#64748b',
-                  border: isSolved ? '2px solid #38bdf8' : 'none'
-                }}>
-                  {isSolved ? p.keyFragment : '?'}
-                </div>
-              );
-            })}
-          </div>
+    if (isCorrect) {
+      alert('마방진 완성 성공!');
+      markPuzzleSolved(5);
+    } else {
+      alert('마방진 규칙이 맞지 않습니다. (모든 가로/세로/대각선 합 = 15)');
+    }
+  };
 
-          {solvedPuzzles.length === 6 && !isEscaped && (
+  // ---------------------------------------------------------------------------
+  // RENDER: LOGIN / LOBBY
+  // ---------------------------------------------------------------------------
+  if (gameState === 'LOGIN') {
+    return (
+      <div style={containerStyle}>
+        <div style={cardStyle}>
+          <h1 style={{ color: '#38bdf8' }}>🎮 Math Escape Metaverse</h1>
+          <p style={{ color: '#94a3b8' }}>대기방 입장을 위한 닉네임을 입력하세요.</p>
+          <input
+            type="text"
+            placeholder="닉네임 입력"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            style={inputStyle}
+          />
+          <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
             <button
-              onClick={() => setIsEscaped(true)}
-              style={{
-                marginTop: '1.5rem',
-                padding: '0.75rem 2rem',
-                backgroundColor: '#22c55e',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '0.5rem',
-                fontSize: '1.1rem',
-                fontWeight: 'bold',
-                cursor: 'pointer'
+              onClick={() => {
+                if (!nickname) return alert('닉네임을 입력하세요!');
+                setPlayer({ ...player, nickname });
+                setGameState('WAITING');
               }}
+              style={{ ...btnStyle, backgroundColor: '#0284c7', flex: 1 }}
             >
-              🎉 모든 열쇠 수집 완료! 탈출하기
+              참가자로 입장
             </button>
+            <button
+              onClick={() => {
+                setIsAdmin(true);
+                setGameState('WAITING');
+              }}
+              style={{ ...btnStyle, backgroundColor: '#475569', flex: 1 }}
+            >
+              관리자로 입장
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'WAITING') {
+    return (
+      <div style={containerStyle}>
+        <div style={cardStyle}>
+          <h2 style={{ color: '#38bdf8' }}>⏳ 게임 대기실</h2>
+          <p>접속자: <strong>{player.nickname || '관리자'}</strong></p>
+          <p style={{ color: '#94a3b8' }}>모든 참가자가 준비되면 관리자가 시작합니다.</p>
+          
+          {isAdmin ? (
+            <button
+              onClick={() => setGameState('PLAYING')}
+              style={{ ...btnStyle, backgroundColor: '#22c55e', width: '100%', marginTop: '20px' }}
+            >
+              🚀 전체 게임 동시 시작 (관리자 전용)
+            </button>
+          ) : (
+            <p style={{ color: '#f59e0b', marginTop: '20px' }}>관리자의 시작 명령을 기다리는 중...</p>
           )}
         </div>
+      </div>
+    );
+  }
 
-        {/* 퍼즐 카드 목록 */}
+  // ---------------------------------------------------------------------------
+  // RENDER: PLAYING METAVERSE FIELD
+  // ---------------------------------------------------------------------------
+  return (
+    <div style={containerStyle}>
+      <div style={{ width: '100%', maxWidth: '620px' }}>
+        {/* Header HUD */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', color: '#fff' }}>
+          <div>👤 {player.nickname}</div>
+          <div>⏱️ 소요시간: {timer}초</div>
+          <div>🔑 클리어: {player.solvedPuzzles.length} / 6</div>
+        </div>
+
+        {/* 2D Canvas / Tile Field */}
         <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: '1rem',
-          textAlign: 'left'
+          width: '100%', height: '400px', backgroundColor: '#1e293b',
+          borderRadius: '12px', border: '2px solid #334155', position: 'relative', overflow: 'hidden'
         }}>
-          {PUZZLES.map((puzzle) => {
-            const isSolved = solvedPuzzles.includes(puzzle.id);
+          {/* Puzzle Nodes */}
+          {PUZZLE_NODES.map((node) => {
+            const isSolved = player.solvedPuzzles.includes(node.id);
             return (
-              <div key={puzzle.id} style={{
-                backgroundColor: '#1e293b',
-                borderRadius: '0.75rem',
-                padding: '1.25rem',
-                border: isSolved ? '1px solid #0284c7' : '1px solid #334155',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between'
-              }}>
-                <div>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 'bold', color: isSolved ? '#38bdf8' : '#f1f5f9', marginBottom: '0.5rem' }}>
-                    {puzzle.title}
-                  </h3>
-                  <p style={{ fontSize: '0.875rem', color: '#94a3b8', marginBottom: '1rem' }}>
-                    {puzzle.description}
-                  </p>
-                </div>
-                <button
-                  onClick={() => openPuzzle(puzzle)}
-                  style={{
-                    width: '100%',
-                    padding: '0.6rem',
-                    borderRadius: '0.375rem',
-                    border: 'none',
-                    backgroundColor: isSolved ? '#334155' : '#0284c7',
-                    color: isSolved ? '#94a3b8' : '#ffffff',
-                    cursor: 'pointer',
-                    fontWeight: 'bold'
-                  }}
-                >
-                  {isSolved ? '다시 보기' : '퍼즐 풀기'}
-                </button>
+              <div
+                key={node.id}
+                style={{
+                  position: 'absolute', left: `${node.x - 25}px`, top: `${node.y - 25}px`,
+                  width: '50px', height: '50px', borderRadius: '50%',
+                  backgroundColor: isSolved ? '#22c55e' : '#0284c7',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.75rem', fontWeight: 'bold', color: '#fff', textAlign: 'center',
+                  border: '2px solid #fff', boxShadow: '0 0 10px rgba(0,0,0,0.5)'
+                }}
+              >
+                {node.id}번
               </div>
             );
           })}
+
+          {/* User Avatar */}
+          <div style={{
+            position: 'absolute', left: `${player.x - 15}px`, top: `${player.y - 15}px`,
+            width: '30px', height: '30px', borderRadius: '50%',
+            backgroundColor: player.color, border: '3px solid #f0fdf4',
+            transition: 'all 0.1s ease', boxShadow: '0 0 8px #fff'
+          }} />
+        </div>
+
+        {/* Mobile Virtual Controller */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginTop: '15px', maxWidth: '200px', margin: '15px auto 0' }}>
+          <div />
+          <button onClick={() => movePlayer(0, -20)} style={touchBtnStyle}>▲</button>
+          <div />
+          <button onClick={() => movePlayer(-20, 0)} style={touchBtnStyle}>◀</button>
+          <button onClick={() => movePlayer(0, 20)} style={touchBtnStyle}>▼</button>
+          <button onClick={() => movePlayer(20, 0)} style={touchBtnStyle}>▶</button>
         </div>
       </div>
 
-      {/* 퍼즐 문제 모달 (팝업) */}
-      {activePuzzle && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.75)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1rem',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: '#1e293b',
-            padding: '2rem',
-            borderRadius: '1rem',
-            maxWidth: '500px',
-            width: '100%',
-            border: '1px solid #475569'
-          }}>
-            <h2 style={{ color: '#38bdf8', marginTop: 0 }}>{activePuzzle.title}</h2>
-            <p style={{ fontSize: '1.05rem', lineHeight: '1.6', color: '#f8fafc' }}>{activePuzzle.question}</p>
-            <p style={{ fontSize: '0.875rem', color: '#64748b', fontStyle: 'italic' }}>💡 힌트: {activePuzzle.hint}</p>
-
-            <input
-              type="text"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              placeholder="정답을 입력하세요"
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmitAnswer()}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                borderRadius: '0.5rem',
-                border: '1px solid #475569',
-                backgroundColor: '#0f172a',
-                color: '#fff',
-                fontSize: '1rem',
-                marginTop: '1rem',
-                boxSizing: 'border-box'
-              }}
-            />
-
-            {feedback && (
-              <p style={{
-                marginTop: '1rem',
-                fontWeight: 'bold',
-                color: feedback.isError ? '#f87171' : '#4ade80'
-              }}>
-                {feedback.message}
-              </p>
+      {/* ----------------------------------------------------------------------- */}
+      {/* PUZZLE MODALS */}
+      {/* ----------------------------------------------------------------------- */}
+      {activePuzzleId && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            {/* Puzzle 1: 31 Game */}
+            {activePuzzleId === 1 && (
+              <div>
+                <h3>🎮 1. AI 31 게임</h3>
+                <p>현재 합계: <strong style={{ fontSize: '1.5rem', color: '#38bdf8' }}>{game31Sum}</strong></p>
+                <p style={{ fontSize: '0.9rem', color: '#94a3b8' }}>{game31Log}</p>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                  {[1, 2, 3].map((num) => (
+                    <button
+                      key={num}
+                      disabled={game31Turn !== 'USER'}
+                      onClick={() => handle31UserMove(num)}
+                      style={{ ...btnStyle, backgroundColor: '#0284c7', flex: 1 }}
+                    >
+                      +{num}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
-              <button
-                onClick={handleSubmitAnswer}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  backgroundColor: '#0284c7',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
-                }}
-              >
-                정답 제출
-              </button>
-              <button
-                onClick={() => setActivePuzzle(null)}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  backgroundColor: '#475569',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
-                }}
-              >
-                닫기
-              </button>
-            </div>
+            {/* Puzzle 2: Digit Product Pattern */}
+            {activePuzzleId === 2 && (
+              <div>
+                <h3>🧩 2. 규칙 찾기</h3>
+                <p>973, 189, ??, 14, 4</p>
+                <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>??에 들어갈 숫자는?</p>
+                <input type="number" value={inputP2} onChange={(e) => setInputP2(e.target.value)} style={inputStyle} />
+                <button
+                  onClick={() => {
+                    if (inputP2.trim() === '72') markPuzzleSolved(2);
+                    else alert('오답입니다!');
+                  }}
+                  style={{ ...btnStyle, backgroundColor: '#0284c7', width: '100%', marginTop: '10px' }}
+                >
+                  제출
+                </button>
+              </div>
+            )}
+
+            {/* Puzzle 3: Baseball Game */}
+            {activePuzzleId === 3 && (
+              <div>
+                <h3>⚾ 3. 숫자야구 (4자리)</h3>
+                <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>0~9 중 서로 다른 4자리 숫자를 맞히세요. (남은 기회: {10 - baseballHistory.length}회)</p>
+                <input
+                  type="text"
+                  maxLength={4}
+                  value={baseballInput}
+                  onChange={(e) => setBaseballInput(e.target.value)}
+                  placeholder="예: 0123"
+                  style={inputStyle}
+                />
+                <button onClick={handleBaseballSubmit} style={{ ...btnStyle, backgroundColor: '#0284c7', width: '100%', marginTop: '10px' }}>
+                  제출
+                </button>
+                <div style={{ maxHeight: '100px', overflowY: 'auto', marginTop: '10px', fontSize: '0.85rem' }}>
+                  {baseballHistory.map((h, i) => (
+                    <div key={i}>{i + 1}회: {h.tryStr} ➔ {h.result}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Puzzle 4: Sum and Multiply Pattern */}
+            {activePuzzleId === 4 && (
+              <div>
+                <h3>📐 4. 연산 규칙 찾기</h3>
+                <p>11×11 = 4<br />22×22 = 16<br />33×33 = 36<br />44×44 = ??</p>
+                <input type="number" value={inputP4} onChange={(e) => setInputP4(e.target.value)} style={inputStyle} />
+                <button
+                  onClick={() => {
+                    if (inputP4.trim() === '64') markPuzzleSolved(4);
+                    else alert('오답입니다!');
+                  }}
+                  style={{ ...btnStyle, backgroundColor: '#0284c7', width: '100%', marginTop: '10px' }}
+                >
+                  제출
+                </button>
+              </div>
+            )}
+
+            {/* Puzzle 5: Magic Square */}
+            {activePuzzleId === 5 && (
+              <div>
+                <h3>🔳 5. 3x3 마방진 완성</h3>
+                <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>모든 가로, 세로, 대각선 합이 15가 되도록 빈칸을 채우세요.</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px', margin: '10px 0' }}>
+                  {magicSquare.map((val, idx) => (
+                    <input
+                      key={idx}
+                      type="number"
+                      maxLength={1}
+                      disabled={idx >= 6} // 마지막 행은 주어진 문제 고정
+                      value={val}
+                      onChange={(e) => {
+                        const newGrid = [...magicSquare];
+                        newGrid[idx] = e.target.value;
+                        setMagicSquare(newGrid);
+                      }}
+                      style={{ ...inputStyle, textAlign: 'center', fontWeight: 'bold' }}
+                    />
+                  ))}
+                </div>
+                <button onClick={handleMagicSquareSubmit} style={{ ...btnStyle, backgroundColor: '#0284c7', width: '100%' }}>
+                  검증 및 제출
+                </button>
+              </div>
+            )}
+
+            {/* Puzzle 6: Subjective Sense Quiz */}
+            {activePuzzleId === 6 && (
+              <div>
+                <h3>❓ 6. 주관식 센스 퀴즈</h3>
+                <p>5는 0을 이기고,<br />0은 2를 이기고,<br />2는 5를 이기는 것은?</p>
+                <input type="text" value={inputP6} onChange={(e) => setInputP6(e.target.value)} placeholder="정답 입력" style={inputStyle} />
+                <button
+                  onClick={() => {
+                    if (inputP6.trim().replace(/\s+/g, '') === '가위바위보') markPuzzleSolved(6);
+                    else alert('오답입니다! (힌트: 손가락 모양)');
+                  }}
+                  style={{ ...btnStyle, backgroundColor: '#0284c7', width: '100%', marginTop: '10px' }}
+                >
+                  제출
+                </button>
+              </div>
+            )}
+
+            <button onClick={() => setActivePuzzleId(null)} style={{ ...btnStyle, backgroundColor: '#475569', width: '100%', marginTop: '10px' }}>
+              닫기
+            </button>
           </div>
         </div>
       )}
 
-      {/* 최종 탈출 성공 모달 */}
-      {isEscaped && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.85)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1rem',
-          zIndex: 2000
-        }}>
-          <div style={{
-            backgroundColor: '#0f172a',
-            padding: '2.5rem',
-            borderRadius: '1rem',
-            maxWidth: '450px',
-            width: '100%',
-            textAlign: 'center',
-            border: '2px solid #22c55e'
-          }}>
-            <h1 style={{ fontSize: '3rem', margin: '0 0 1rem 0' }}>🏆</h1>
-            <h2 style={{ color: '#22c55e', marginTop: 0 }}>방탈출 성공!</h2>
-            <p style={{ color: '#e2e8f0', fontSize: '1.1rem', lineHeight: '1.6' }}>
-              축하합니다! 6개의 수학 퍼즐을 모두 해결하고 최종 암호문 <strong style={{ color: '#38bdf8' }}>MATH!7</strong>을 완벽히 해독하여 탈출에 성공하셨습니다!
-            </p>
+      {/* ----------------------------------------------------------------------- */}
+      {/* FINAL ENDED & RANKING SCREEN */}
+      {/* ----------------------------------------------------------------------- */}
+      {gameState === 'ENDED' && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h1 style={{ color: '#22c55e' }}>🎉 탈출 성공!</h1>
+            <p>참가자: <strong>{player.nickname}</strong></p>
+            <p>최종 기록: <strong style={{ color: '#38bdf8' }}>{timer}초</strong></p>
+            <hr style={{ borderColor: '#334155', margin: '15px 0' }} />
+            <h3>🏆 실시간 순위 정보</h3>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>1위: {player.nickname} ({timer}초)</p>
             <button
               onClick={() => {
-                setSolvedPuzzles([]);
-                setIsEscaped(false);
+                setGameState('LOGIN');
+                setPlayer({ ...player, solvedPuzzles: [] });
               }}
-              style={{
-                marginTop: '1.5rem',
-                padding: '0.75rem 2rem',
-                backgroundColor: '#22c55e',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '0.5rem',
-                fontSize: '1rem',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
+              style={{ ...btnStyle, backgroundColor: '#22c55e', width: '100%', marginTop: '15px' }}
             >
-              처음부터 다시 하기
+              다시 도전하기
             </button>
           </div>
         </div>
@@ -366,3 +499,35 @@ export default function App() {
     </div>
   );
 }
+
+// ===========================================================================
+// STYLES
+// ===========================================================================
+const containerStyle: React.CSSProperties = {
+  minHeight: '100vh', backgroundColor: '#0f172a', color: '#fff',
+  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '15px', fontFamily: 'sans-serif'
+};
+
+const cardStyle: React.CSSProperties = {
+  backgroundColor: '#1e293b', padding: '25px', borderRadius: '12px', border: '1px solid #334155', textAlign: 'center', maxWidth: '400px', width: '100%'
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #475569', backgroundColor: '#0f172a', color: '#fff', marginTop: '8px', boxSizing: 'border-box'
+};
+
+const btnStyle: React.CSSProperties = {
+  padding: '10px 15px', borderRadius: '6px', border: 'none', color: '#fff', fontWeight: 'bold', cursor: 'pointer'
+};
+
+const touchBtnStyle: React.CSSProperties = {
+  width: '50px', height: '50px', borderRadius: '8px', border: 'none', backgroundColor: '#334155', color: '#fff', fontSize: '1.2rem', fontWeight: 'bold', cursor: 'pointer'
+};
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '15px', zIndex: 1000
+};
+
+const modalContentStyle: React.CSSProperties = {
+  backgroundColor: '#1e293b', padding: '20px', borderRadius: '12px', border: '1px solid #475569', maxWidth: '400px', width: '100%'
+};
